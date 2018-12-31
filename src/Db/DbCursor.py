@@ -65,7 +65,6 @@ class DbCursor:
 
 
         s = time.time()
-        # if query == "COMMIT": self.logging = True # Turn logging back on transaction commit
 
         if params:  # Query has parameters
             res = self.cursor.execute(query, params)
@@ -83,7 +82,6 @@ class DbCursor:
             self.db.query_stats[query]["call"] += 1
             self.db.query_stats[query]["time"] += time.time() - s
 
-        # if query == "BEGIN": self.logging = False # Turn logging off on transaction commit
         return res
 
     # Creates on updates a database row without incrementing the rowid
@@ -116,8 +114,10 @@ class DbCursor:
     # Create indexes on table
     # Return: True on success
     def createIndexes(self, table, indexes):
-        # indexes.append("CREATE INDEX %s_id ON %s(%s_id)" % (table, table, table)) # Primary key index
         for index in indexes:
+            if not index.strip().upper().startswith("CREATE"):
+                self.db.log.error("Index command should start with CREATE: %s" % index)
+                continue
             self.execute(index)
 
     # Create table if not exist

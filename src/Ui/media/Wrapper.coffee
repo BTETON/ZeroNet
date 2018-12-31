@@ -49,7 +49,6 @@ class Wrapper
 			throw "Event not trusted"
 
 		if e.originalEvent.constructor not in @allowed_event_constructors
-			debugger
 			throw "Invalid event constructor: #{e.constructor} not in #{JSON.stringify(@allowed_event_constructors)}"
 
 		if e.originalEvent.currentTarget != allowed_target[0]
@@ -93,8 +92,15 @@ class Wrapper
 		else if cmd == "updating" # Close connection
 			@ws.ws.close()
 			@ws.onCloseWebsocket(null, 4000)
+		else if cmd == "redirect"
+			window.top.location = message.params
 		else if cmd == "injectHtml"
 			$("body").append(message.params)
+		else if cmd == "injectScript"
+			script_tag = $("<script>")
+			script_tag.attr("nonce", @script_nonce)
+			script_tag.html(message.params)
+			document.head.appendChild(script_tag[0])
 		else
 			@sendInner message # Pass message to inner frame
 
@@ -218,20 +224,9 @@ class Wrapper
 			w.location = params[0]
 
 	actionRequestFullscreen: ->
-		if "Fullscreen" in @site_info.settings.permissions
-			elem = document.getElementById("inner-iframe")
-			request_fullscreen = elem.requestFullScreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullScreen
-			request_fullscreen.call(elem)
-			setTimeout ( =>
-				if window.innerHeight != screen.height  # Fullscreen failed, probably only allowed on click
-					@displayConfirm "This site requests permission:" + " <b>Fullscreen</b>", "Accept", =>
-						request_fullscreen.call(elem)
-			), 100
-		else
-			@displayConfirm "This site requests permission:" + " <b>Fullscreen</b>", "Accept", =>
-				@site_info.settings.permissions.push("Fullscreen")
-				@actionRequestFullscreen()
-				@ws.cmd "permissionAdd", "Fullscreen"
+		elem = document.getElementById("inner-iframe")
+		request_fullscreen = elem.requestFullScreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullScreen
+		request_fullscreen.call(elem)
 
 	actionPermissionAdd: (message) ->
 		permission = message.params
@@ -392,8 +387,9 @@ class Wrapper
 
 
 	actionSetLocalStorage: (message) ->
-		back = localStorage.setItem "site.#{@site_info.address}.#{@site_info.auth_address}", JSON.stringify(message.params)
-		@sendInner {"cmd": "response", "to": message.id, "result": back}
+		$.when(@event_site_info).done =>
+			back = localStorage.setItem "site.#{@site_info.address}.#{@site_info.auth_address}", JSON.stringify(message.params)
+			@sendInner {"cmd": "response", "to": message.id, "result": back}
 
 
 	# EOF actions
@@ -451,11 +447,13 @@ class Wrapper
 			window.document.title = @site_info.content.title+" - ZeroNet"
 			@log "Setting title to", window.document.title
 
-
 	onWrapperLoad: =>
+		@script_nonce = window.script_nonce
+		@wrapper_key = window.wrapper_key
 		# Cleanup secret variables
 		delete window.wrapper
 		delete window.wrapper_key
+		delete window.script_nonce
 		$("#script_init").remove()
 
 	# Send message to innerframe
@@ -483,8 +481,8 @@ class Wrapper
 							if res == "ok"
 								@notifications.add("size_limit", "done", "Site storage limit modified!", 5000)
 
-			if site_info.content
-				window.document.title = site_info.content.title+" - ZeroNet"
+			if site_info.content?.title?
+				window.document.title = site_info.content.title + " - ZeroNet"
 				@log "Setting title to", window.document.title
 
 
@@ -541,7 +539,8 @@ class Wrapper
 	setAnnouncerInfo: (announcer_info) ->
 		status_db = {announcing: [], error: [], announced: []}
 		for key, val of announcer_info.stats
-			status_db[val.status].push(val)
+			if val.status
+				status_db[val.status].push(val)
 		status_line = "Trackers announcing: #{status_db.announcing.length}, error: #{status_db.error.length}, done: #{status_db.announced.length}"
 		if @announcer_line
 			@announcer_line.text(status_line)

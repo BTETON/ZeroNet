@@ -45,6 +45,11 @@ class ConnectionServer(object):
         self.num_recv = 0
         self.num_sent = 0
 
+        self.num_incoming = 0
+        self.num_outgoing = 0
+
+        self.timecorrection = 0.0
+
         # Bittorrent style peerid
         self.peer_id = "-UT3530-%s" % CryptHash.random(12, "base64")
 
@@ -96,6 +101,7 @@ class ConnectionServer(object):
 
     def handleIncomingConnection(self, sock, addr):
         ip, port = addr
+        self.num_incoming += 1
 
         # Connection flood protection
         if ip in self.ip_incoming and ip not in self.whitelist:
@@ -156,7 +162,7 @@ class ConnectionServer(object):
             if port == 0:
                 raise Exception("This peer is not connectable")
 
-            if (ip, port) in self.peer_blacklist:
+            if (ip, port) in self.peer_blacklist and not is_tracker_connection:
                 raise Exception("This peer is blacklisted")
 
             try:
@@ -164,8 +170,10 @@ class ConnectionServer(object):
                     connection = Connection(self, ip, port, target_onion=site_onion, is_tracker_connection=is_tracker_connection)
                 else:
                     connection = Connection(self, ip, port, is_tracker_connection=is_tracker_connection)
+                self.num_outgoing += 1
                 self.ips[key] = connection
                 self.connections.append(connection)
+                connection.log("Connecting... (site: %s)" % site)
                 succ = connection.connect()
                 if not succ:
                     connection.close("Connection event return error")
@@ -223,11 +231,11 @@ class ConnectionServer(object):
                     connection.unpacker = None
 
                 elif connection.last_cmd_sent == "announce" and idle > 20:  # Bootstrapper connection close after 20 sec
-                    connection.close("[Cleanup] Tracker connection: %s" % idle)
+                    connection.close("[Cleanup] Tracker connection, idle: %.3fs" % idle)
 
                 if idle > 60 * 60:
                     # Wake up after 1h
-                    connection.close("[Cleanup] After wakeup, idle: %s" % idle)
+                    connection.close("[Cleanup] After wakeup, idle: %.3fs" % idle)
 
                 elif idle > 20 * 60 and connection.last_send_time < time.time() - 10:
                     # Idle more than 20 min and we have not sent request in last 10 sec
@@ -275,6 +283,8 @@ class ConnectionServer(object):
                     self.has_internet = True
                     self.onInternetOnline()
 
+            self.timecorrection = self.getTimecorrection()
+
             if time.time() - s > 0.01:
                 self.log.debug("Connection cleanup in %.3fs" % (time.time() - s))
         self.log.debug("Checkconnections ended")
@@ -307,7 +317,7 @@ class ConnectionServer(object):
     def onInternetOffline(self):
         self.log.info("Internet offline")
 
-    def getTimeCorrection(self):
+    def getTimecorrection(self):
         corrections = sorted([
             connection.handshake.get("time") - connection.handshake_time + connection.last_ping_delay
             for connection in self.connections
